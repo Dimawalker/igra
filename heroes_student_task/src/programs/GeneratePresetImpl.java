@@ -4,101 +4,126 @@ import com.battle.heroes.army.Army;
 import com.battle.heroes.army.Unit;
 import com.battle.heroes.army.programs.GeneratePreset;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Random;
-import java.util.Set;
-
+import java.util.*;
 
 public class GeneratePresetImpl implements GeneratePreset {
 
-    public static final int UNITS_TYPE_COUNT = 11;
-    public static final int HEIGHT_ARMY = 21;
-    public static final int WIDTH_ARMY = 3;
+    private static final int MAX_PER_TYPE = 11;
 
-    private final Random random = new Random();
+    private static final int FIELD_WIDTH = 27;
+    private static final int FIELD_HEIGHT = 21;
+    private static final int ARMY_WIDTH = 3;
 
+    private final Random rnd = new Random();
 
     @Override
     public Army generate(List<Unit> unitList, int maxPoints) {
-        var result = new Army();
-        var unitCount = new int[unitList.size()];
-        var generatedUnits = new ArrayList<Unit>();
-        var occupiedCoordinates = new HashSet<Coordinate>();
+        Army result = new Army();
+        result.setUnits(new ArrayList<>());
+        result.setPoints(0);
 
-        unitList.sort(Comparator.comparingDouble(unit -> -((double) (unit.getBaseAttack() + unit.getHealth()) / unit.getCost())));
-
-        int totalPoints = 0;
-
-        for (Unit unit : unitList) {
-            while (unitCount[unitList.indexOf(unit)] < UNITS_TYPE_COUNT && totalPoints + unit.getCost() <= maxPoints) {
-                addUnit(unit, generatedUnits, occupiedCoordinates, unitList.indexOf(unit));
-                unitCount[unitList.indexOf(unit)]++; // увеличиваем счетчик
-                totalPoints += unit.getCost();
-            }
+        if (unitList == null || unitList.isEmpty() || maxPoints <= 0) {
+            return result;
         }
 
-        result.setUnits(generatedUnits);
-        result.setPoints(totalPoints);
+        List<Unit> templates = new ArrayList<>();
+        for (Unit u : unitList) {
+            if (u != null && u.getCost() > 0) templates.add(u);
+        }
+        if (templates.isEmpty()) return result;
 
+        Map<String, Integer> countByType = new HashMap<>();
+
+        Set<Long> occupied = new HashSet<>();
+
+        List<Unit> generated = new ArrayList<>();
+        int pointsUsed = 0;
+
+        while (true) {
+            Unit best = null;
+
+            for (Unit tpl : templates) {
+                String type = tpl.getUnitType();
+                int cnt = countByType.getOrDefault(type, 0);
+
+                if (cnt >= MAX_PER_TYPE) continue;
+                if (pointsUsed + tpl.getCost() > maxPoints) continue;
+
+                if (best == null) {
+                    best = tpl;
+                } else {
+                    if (compareEfficiency(tpl, best) > 0) {
+                        best = tpl;
+                    }
+                }
+            }
+
+            if (best == null) break;
+
+            String type = best.getUnitType();
+            int newIndex = countByType.getOrDefault(type, 0) + 1;
+
+            String uniqueName = type + " " + newIndex;
+
+            int x, y;
+            do {
+                x = rnd.nextInt(ARMY_WIDTH);     // 0..2 (левая зона)
+                y = rnd.nextInt(FIELD_HEIGHT);   // 0..20
+            } while (!occupied.add(pack(x, y)));
+
+            Unit created = cloneFromTemplate(best, uniqueName, x, y);
+            generated.add(created);
+
+            countByType.put(type, newIndex);
+            pointsUsed += best.getCost();
+        }
+
+        result.setUnits(generated);
+        result.setPoints(pointsUsed);
         return result;
     }
 
-    /**
-     * Добавляет юнит в армию противника.
-     */
-    private void addUnit(Unit unit, ArrayList<Unit> generatedUnits, Set<Coordinate> occupiedCoordinates, int index) {
-        var coordinate = new Coordinate(random.nextInt(WIDTH_ARMY), random.nextInt(HEIGHT_ARMY));
-        while (occupiedCoordinates.contains(coordinate)) {
-            coordinate.setxCoordinate(random.nextInt(WIDTH_ARMY));
-            coordinate.setyCoordinate(random.nextInt(HEIGHT_ARMY));
-        }
+    private static int compareEfficiency(Unit a, Unit b) {
+        double aAtk = (double) a.getBaseAttack() / a.getCost();
+        double bAtk = (double) b.getBaseAttack() / b.getCost();
+        int c1 = Double.compare(aAtk, bAtk);
+        if (c1 != 0) return c1;
 
-        occupiedCoordinates.add(coordinate);
+        double aHp = (double) a.getHealth() / a.getCost();
+        double bHp = (double) b.getHealth() / b.getCost();
+        int c2 = Double.compare(aHp, bHp);
+        if (c2 != 0) return c2;
 
-        var newUnit = new Unit(unit.getUnitType() + " " + index,
-                unit.getUnitType(),
-                unit.getHealth(),
-                unit.getBaseAttack(),
-                unit.getCost(),
-                unit.getAttackType(),
-                unit.getAttackBonuses(),
-                unit.getDefenceBonuses(),
-                coordinate.getxCoordinate(),
-                coordinate.getyCoordinate());
-
-        generatedUnits.add(newUnit);
+        // Если всё одинаково — предпочитаем более дешёвого
+        return Integer.compare(b.getCost(), a.getCost()); // меньше cost => "лучше"
     }
 
-    /**
-     * Класс с координатами, используется для определения координат юнита.
-     */
-    private static class Coordinate {
-        private int xCoordinate;
-        private int yCoordinate;
+    private static Unit cloneFromTemplate(Unit tpl, String uniqueName, int x, int y) {
+        Map<String, Double> attackBonuses = tpl.getAttackBonuses() == null
+                ? new HashMap<>()
+                : new HashMap<>(tpl.getAttackBonuses());
 
-        Coordinate(int xCoordinate, int yCoordinate) {
-            this.xCoordinate = xCoordinate;
-            this.yCoordinate = yCoordinate;
-        }
+        Map<String, Double> defenceBonuses = tpl.getDefenceBonuses() == null
+                ? new HashMap<>()
+                : new HashMap<>(tpl.getDefenceBonuses());
 
-        public int getxCoordinate() {
-            return xCoordinate;
-        }
-
-        public int getyCoordinate() {
-            return yCoordinate;
-        }
-
-        public void setxCoordinate(int xCoordinate) {
-            this.xCoordinate = xCoordinate;
-        }
-
-        public void setyCoordinate(int yCoordinate) {
-            this.yCoordinate = yCoordinate;
-        }
+        Unit u = new Unit(
+                uniqueName,
+                tpl.getUnitType(),
+                tpl.getHealth(),
+                tpl.getBaseAttack(),
+                tpl.getCost(),
+                tpl.getAttackType(),
+                attackBonuses,
+                defenceBonuses,
+                x,
+                y
+        );
+        u.setAlive(true);
+        return u;
     }
 
+    private static long pack(int x, int y) {
+        return (((long) x) << 32) ^ (y & 0xffffffffL);
+    }
 }
